@@ -18,7 +18,17 @@ def make_request(host, path):
 
     s.close()
     response = response.decode("utf-8", errors="replace")
-    print(response)
+
+    headers, body = response.split("\r\n\r\n", 1)
+    return headers, body
+
+
+def parse_url(url):
+    domain = url.split("//")[1]
+    parts = domain.split("/")
+    host = parts[0]
+    path = "/" + "/".join(parts[1:])
+    return host, path
 
 
 def main():
@@ -35,7 +45,6 @@ def main():
     else:
         parser.print_help()
 
-    make_request("example.com", "/")
 
 if __name__ == "__main__":
     main()
