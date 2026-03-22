@@ -1,6 +1,7 @@
 import argparse
 import socket
 import ssl
+import urllib.parse
 from bs4 import BeautifulSoup
 
 
@@ -19,8 +20,6 @@ def make_request(host, path, scheme="http"):
     except (socket.timeout, ConnectionRefusedError) as e:
         print(f"Error: Could not connect to {host} - {e}")
         return None, None
-
-    s.connect((host, port))
 
     request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
     s.sendall(request.encode())
@@ -84,8 +83,11 @@ def parse_search_results(html):
 
     for result in soup.find_all("a", class_="result__a"):
         title = result.get_text()
-        url_tag = result.find_next("a", class_="result__url")
-        url = url_tag.get_text(strip=True) if url_tag else "No URL"
+        href = result.get("href", "")
+        # extract the real URL from the uddg parameter
+        parsed = urllib.parse.urlparse(href)
+        params = urllib.parse.parse_qs(parsed.query)
+        url = params.get("uddg", ["No URL"])[0]
         results.append((title, url))
 
     return results[:10]
