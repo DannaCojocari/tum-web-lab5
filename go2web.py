@@ -31,6 +31,7 @@ def make_request(host, path, scheme="http"):
         f"GET {path} HTTP/1.1\r\n"
         f"Host: {host}\r\n"
         f"User-Agent: Mozilla/5.0 (compatible; go2web/1.0)\r\n"
+        f"Accept: application/json, text/html\r\n"
         f"Connection: close\r\n\r\n"
     )
     s.sendall(request.encode())
@@ -121,6 +122,22 @@ def get_location(headers):
             return line.split(": ", 1)[1].strip()
     return None
 
+def get_content_type(headers):
+    for line in headers.split("\r\n"):
+        if line.lower().startswith("content-type:"):
+            return line.split(": ", 1)[1].strip()
+    return "text/html"
+
+def format_body(headers, body):
+    content_type = get_content_type(headers)
+    if "application/json" in content_type:
+        try:
+            parsed = json.loads(body)
+            return json.dumps(parsed, indent=2)
+        except json.JSONDecodeError:
+            return body  # fallback if JSON is invalid
+    else:
+        return strip_html(body)  # default to HTML stripping
 
 def load_cache():
     if os.path.exists(CACHE_FILE):
@@ -164,7 +181,7 @@ def main():
         headers, body = get_from_cache(current_url)
         if headers is not None:
             print("(from cache)")
-            print(strip_html(body))
+            print(format_body(headers, body))
         else:
             # not in cache, make real request
             max_redirects = 5
@@ -188,7 +205,7 @@ def main():
 
             # save to cache
             save_to_cache(current_url, headers, body)
-            print(strip_html(body))
+            print(format_body(headers, body))
     elif args.s:
         host, path = build_search_url(args.s)
         headers, body = make_request(host, path, "https")
