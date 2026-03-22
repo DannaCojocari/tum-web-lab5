@@ -1,5 +1,6 @@
 import argparse
 import socket
+from bs4 import BeautifulSoup
 
 
 def make_request(host, path):
@@ -31,6 +32,24 @@ def parse_url(url):
     return host, path
 
 
+def decode_chunked(body):
+    result = ""
+    while body:
+        # find the chunk size
+        size_str, body = body.split("\r\n", 1)
+        size = int(size_str.strip(), 16)
+        if size == 0:
+            break
+        result += body[:size]
+        body = body[size + 2:]  # skip the \r\n after chunk
+    return result
+
+
+def strip_html(html):
+    soup = BeautifulSoup(html, "html.parser")
+    return soup.get_text(separator="\n", strip=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="go2web - a simple HTTP client")
     parser.add_argument("-u", help="make an HTTP request to the specified URL and print the response", metavar="URL")
@@ -38,12 +57,18 @@ def main():
     args = parser.parse_args()
 
     if args.u:
-        print(args.u)
+        host, path = parse_url(args.u)
+        headers, body = make_request(host, path)
+        if "Transfer-Encoding: chunked" in headers:
+            body = decode_chunked(body)
+        print(strip_html(body))
     elif args.s:
         search_term = " ".join(args.s)
         print(f"Searching for: {search_term}")
     else:
         parser.print_help()
+
+
 
 
 if __name__ == "__main__":
