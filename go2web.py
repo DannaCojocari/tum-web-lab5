@@ -13,10 +13,10 @@ def make_request(host, path, scheme="http"):
     s.settimeout(10)
 
     try:
+        s.connect((host, port))
         if is_https:
             context = ssl.create_default_context()
             s = context.wrap_socket(s, server_hostname=host)
-        s.connect((host, port))
     except (socket.timeout, ConnectionRefusedError) as e:
         print(f"Error: Could not connect to {host} - {e}")
         return None, None
@@ -110,6 +110,8 @@ def main():
     elif args.s:
         host, path = build_search_url(args.s)
         headers, body = make_request(host, path, "https")
+        if headers is None:
+            exit(1)
         if "transfer-encoding: chunked" in headers.lower():
             body = decode_chunked(body)
         results = parse_search_results(body)
