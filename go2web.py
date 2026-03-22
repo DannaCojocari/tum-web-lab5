@@ -169,6 +169,49 @@ def save_to_cache(url, headers, body):
     }
     save_cache(cache)
 
+def handle_url(url):
+    scheme, host, path = parse_url(url)
+    current_url = url
+
+    headers, body = get_from_cache(current_url)
+    if headers is not None:
+        print("(from cache)")
+        print(format_body(headers, body))
+    else:
+        max_redirects = 5
+        for _ in range(max_redirects):
+            headers, body = make_request(host, path, scheme)
+            if headers is None:
+                exit(1)
+            status = get_status_code(headers)
+            if status in (301, 302):
+                location = get_location(headers)
+                if location is None:
+                    print("Redirect with no Location header")
+                    exit(1)
+                scheme, host, path = parse_url(location)
+                current_url = location
+            else:
+                break
+
+        if "transfer-encoding: chunked" in headers.lower():
+            body = decode_chunked(body)
+        save_to_cache(current_url, headers, body)
+        print(format_body(headers, body))
+
+def handle_search(term):
+    host, path = build_search_url(term)
+    headers, body = make_request(host, path, "https")
+    if headers is None:
+        exit(1)
+    if "transfer-encoding: chunked" in headers.lower():
+        body = decode_chunked(body)
+    results = parse_search_results(body)
+    for i, (title, url) in enumerate(results, 1):
+        print(f"{i}. {title}")
+        print(f"   {url}")
+        print()
+
 def main():
     parser = argparse.ArgumentParser(description="go2web - a simple HTTP client")
     parser.add_argument("-u", help="make an HTTP request to the specified URL and print the response", metavar="URL")
@@ -176,53 +219,11 @@ def main():
     args = parser.parse_args()
 
     if args.u:
-        scheme, host, path = parse_url(args.u)
-        current_url = args.u
-
-        # check cache first
-        headers, body = get_from_cache(current_url)
-        if headers is not None:
-            print("(from cache)")
-            print(format_body(headers, body))
-        else:
-            # not in cache, make real request
-            max_redirects = 5
-            for _ in range(max_redirects):
-                headers, body = make_request(host, path, scheme)
-                if headers is None:
-                    exit(1)
-                status = get_status_code(headers)
-                if status in (301, 302):
-                    location = get_location(headers)
-                    if location is None:
-                        print("Redirect with no Location header")
-                        exit(1)
-                    scheme, host, path = parse_url(location)
-                    current_url = location
-                else:
-                    break
-
-            if "transfer-encoding: chunked" in headers.lower():
-                body = decode_chunked(body)
-
-            # save to cache
-            save_to_cache(current_url, headers, body)
-            print(format_body(headers, body))
+        handle_url(args.u)
     elif args.s:
-        host, path = build_search_url(args.s)
-        headers, body = make_request(host, path, "https")
-        if headers is None:
-            exit(1)
-        if "transfer-encoding: chunked" in headers.lower():
-            body = decode_chunked(body)
-        results = parse_search_results(body)
-        for i, (title, url) in enumerate(results, 1):
-            print(f"{i}. {title}")
-            print(f"   {url}")
-            print()
+        handle_search(args.s)
     else:
         parser.print_help()
-
 
 
 
