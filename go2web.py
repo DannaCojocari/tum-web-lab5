@@ -3,6 +3,12 @@ import socket
 import ssl
 import urllib.parse
 from bs4 import BeautifulSoup
+import json
+import time
+import os
+
+CACHE_FILE = "cache.json"
+CACHE_EXPIRY = 3600
 
 
 def make_request(host, path, scheme="http"):
@@ -31,10 +37,13 @@ def make_request(host, path, scheme="http"):
 
     response = b""
     while True:
-        chunk = s.recv(4096)
-        if not chunk:
+        try:
+            chunk = s.recv(8192)
+            if not chunk:
+                break
+            response += chunk
+        except socket.timeout:
             break
-        response += chunk
 
     s.close()
     response = response.decode("utf-8", errors="replace")
@@ -113,6 +122,34 @@ def get_location(headers):
     return None
 
 
+def load_cache():
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_cache(cache):
+    with open(CACHE_FILE, "w") as f:
+        json.dump(cache, f)
+
+def get_from_cache(url):
+    cache = load_cache()
+    if url in cache:
+        entry = cache[url]
+        # check if it's expired
+        if time.time() - entry["timestamp"] < CACHE_EXPIRY:
+            return entry["headers"], entry["body"]
+    return None, None
+
+def save_to_cache(url, headers, body):
+    cache = load_cache()
+    cache[url] = {
+        "headers": headers,
+        "body": body,
+        "timestamp": time.time()
+    }
+    save_cache(cache)
+
 def main():
     parser = argparse.ArgumentParser(description="go2web - a simple HTTP client")
     parser.add_argument("-u", help="make an HTTP request to the specified URL and print the response", metavar="URL")
@@ -121,28 +158,37 @@ def main():
 
     if args.u:
         scheme, host, path = parse_url(args.u)
+        current_url = args.u
 
-        max_redirects = 5  # avoid infinite loops
-        for _ in range(max_redirects):
-            headers, body = make_request(host, path, scheme)
-            if headers is None:
-                exit(1)
-
-            status = get_status_code(headers)
-
-            if status in (301, 302):
-                location = get_location(headers)
-                if location is None:
-                    print("Redirect with no Location header")
+        # check cache first
+        headers, body = get_from_cache(current_url)
+        if headers is not None:
+            print("(from cache)")
+            print(strip_html(body))
+        else:
+            # not in cache, make real request
+            max_redirects = 5
+            for _ in range(max_redirects):
+                headers, body = make_request(host, path, scheme)
+                if headers is None:
                     exit(1)
-                print(f"Redirecting to: {location}")
-                scheme, host, path = parse_url(location)
-            else:
-                break
+                status = get_status_code(headers)
+                if status in (301, 302):
+                    location = get_location(headers)
+                    if location is None:
+                        print("Redirect with no Location header")
+                        exit(1)
+                    scheme, host, path = parse_url(location)
+                    current_url = location
+                else:
+                    break
 
-        if "transfer-encoding: chunked" in headers.lower():
-            body = decode_chunked(body)
-        print(strip_html(body))
+            if "transfer-encoding: chunked" in headers.lower():
+                body = decode_chunked(body)
+
+            # save to cache
+            save_to_cache(current_url, headers, body)
+            print(strip_html(body))
     elif args.s:
         host, path = build_search_url(args.s)
         headers, body = make_request(host, path, "https")
