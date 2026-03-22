@@ -17,11 +17,16 @@ def make_request(host, path, scheme="http"):
         if is_https:
             context = ssl.create_default_context()
             s = context.wrap_socket(s, server_hostname=host)
-    except (socket.timeout, ConnectionRefusedError) as e:
+    except (socket.timeout, ConnectionRefusedError, socket.gaierror) as e:
         print(f"Error: Could not connect to {host} - {e}")
         return None, None
 
-    request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+    request = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}\r\n"
+        f"User-Agent: Mozilla/5.0 (compatible; go2web/1.0)\r\n"
+        f"Connection: close\r\n\r\n"
+    )
     s.sendall(request.encode())
 
     response = b""
@@ -39,6 +44,8 @@ def make_request(host, path, scheme="http"):
 
 
 def parse_url(url):
+    if "://" not in url:
+        url = "http://" + url
     scheme = url.split("//")[0].replace(":", "")
     domain = url.split("//")[1]
     parts = domain.split("/")
@@ -93,6 +100,19 @@ def parse_search_results(html):
     return results[:10]
 
 
+def get_status_code(headers):
+    first_line = headers.split("\r\n")[0]
+    status_code = int(first_line.split(" ")[1])
+    return status_code
+
+
+def get_location(headers):
+    for line in headers.split("\r\n"):
+        if line.lower().startswith("location:"):
+            return line.split(": ", 1)[1].strip()
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="go2web - a simple HTTP client")
     parser.add_argument("-u", help="make an HTTP request to the specified URL and print the response", metavar="URL")
@@ -101,9 +121,25 @@ def main():
 
     if args.u:
         scheme, host, path = parse_url(args.u)
-        headers, body = make_request(host, path, scheme)
-        if headers is None:
-            exit(1)
+
+        max_redirects = 5  # avoid infinite loops
+        for _ in range(max_redirects):
+            headers, body = make_request(host, path, scheme)
+            if headers is None:
+                exit(1)
+
+            status = get_status_code(headers)
+
+            if status in (301, 302):
+                location = get_location(headers)
+                if location is None:
+                    print("Redirect with no Location header")
+                    exit(1)
+                print(f"Redirecting to: {location}")
+                scheme, host, path = parse_url(location)
+            else:
+                break
+
         if "transfer-encoding: chunked" in headers.lower():
             body = decode_chunked(body)
         print(strip_html(body))
