@@ -1,11 +1,25 @@
 import argparse
 import socket
+import ssl
+import urllib.parse
 from bs4 import BeautifulSoup
 
 
-def make_request(host, path):
+def make_request(host, path, scheme="http"):
+    is_https = scheme == "https"
+    port = 443 if is_https else 80
+
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((host, 80))
+    s.settimeout(10)
+
+    try:
+        s.connect((host, port))
+        if is_https:
+            context = ssl.create_default_context()
+            s = context.wrap_socket(s, server_hostname=host)
+    except (socket.timeout, ConnectionRefusedError) as e:
+        print(f"Error: Could not connect to {host} - {e}")
+        return None, None
 
     request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
     s.sendall(request.encode())
@@ -25,29 +39,58 @@ def make_request(host, path):
 
 
 def parse_url(url):
+    scheme = url.split("//")[0].replace(":", "")
     domain = url.split("//")[1]
     parts = domain.split("/")
     host = parts[0]
     path = "/" + "/".join(parts[1:])
-    return host, path
+    return scheme, host, path
 
 
 def decode_chunked(body):
     result = ""
     while body:
-        # find the chunk size
+        if "\r\n" not in body:
+            break
         size_str, body = body.split("\r\n", 1)
-        size = int(size_str.strip(), 16)
+        size_str = size_str.strip()
+        if not size_str:  # skip empty lines
+            continue
+        try:
+            size = int(size_str, 16)
+        except ValueError:
+            break
         if size == 0:
             break
         result += body[:size]
-        body = body[size + 2:]  # skip the \r\n after chunk
+        body = body[size + 2:]
     return result
 
 
 def strip_html(html):
     soup = BeautifulSoup(html, "html.parser")
     return soup.get_text(separator="\n", strip=True)
+
+
+def build_search_url(search_term):
+    query = "+".join(search_term)
+    return "html.duckduckgo.com", f"/html/?q={query}"
+
+
+def parse_search_results(html):
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+
+    for result in soup.find_all("a", class_="result__a"):
+        title = result.get_text()
+        href = result.get("href", "")
+        # extract the real URL from the uddg parameter
+        parsed = urllib.parse.urlparse(href)
+        params = urllib.parse.parse_qs(parsed.query)
+        url = params.get("uddg", ["No URL"])[0]
+        results.append((title, url))
+
+    return results[:10]
 
 
 def main():
@@ -57,14 +100,25 @@ def main():
     args = parser.parse_args()
 
     if args.u:
-        host, path = parse_url(args.u)
-        headers, body = make_request(host, path)
-        if "Transfer-Encoding: chunked" in headers:
+        scheme, host, path = parse_url(args.u)
+        headers, body = make_request(host, path, scheme)
+        if headers is None:
+            exit(1)
+        if "transfer-encoding: chunked" in headers.lower():
             body = decode_chunked(body)
         print(strip_html(body))
     elif args.s:
-        search_term = " ".join(args.s)
-        print(f"Searching for: {search_term}")
+        host, path = build_search_url(args.s)
+        headers, body = make_request(host, path, "https")
+        if headers is None:
+            exit(1)
+        if "transfer-encoding: chunked" in headers.lower():
+            body = decode_chunked(body)
+        results = parse_search_results(body)
+        for i, (title, url) in enumerate(results, 1):
+            print(f"{i}. {title}")
+            print(f"   {url}")
+            print()
     else:
         parser.print_help()
 
