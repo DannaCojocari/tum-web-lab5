@@ -38,12 +38,16 @@ def main():
     args = parser.parse_args()
 
     if args.u:
-        print(args.u)
+        host, path = parse_url(args.u)
+        headers, body = make_request(host, path)
+        print(body)
     elif args.s:
         search_term = " ".join(args.s)
         print(f"Searching for: {search_term}")
     else:
         parser.print_help()
+
+
 
 
 if __name__ == "__main__":
