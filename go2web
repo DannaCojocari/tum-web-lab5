@@ -189,6 +189,7 @@ def handle_url(url):
                 if location is None:
                     print("Redirect with no Location header")
                     exit(1)
+                print(f"Redirecting to: {location}")
                 scheme, host, path = parse_url(location)
                 current_url = location
             else:
